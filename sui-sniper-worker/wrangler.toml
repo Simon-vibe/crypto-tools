@@ -1,0 +1,16 @@
+name = "sui-meme-sniper"
+main = "src/worker.ts"
+compatibility_date = "2024-01-01"
+
+# Environment Variables (Secrets should be set via `wrangler secret put`)
+[vars]
+SUI_RPC_URL = "https://fullnode.mainnet.sui.io:443"
+
+# Cron Triggers (Edge Execution)
+# Run every 1 minute to check for opportunities
+[triggers]
+crons = ["* * * * *"]
+
+# Optional: Smart Placement to run close to RPC if possible (requires paid plan usually, keeping simple)
+# [placement]
+# mode = "smart"
