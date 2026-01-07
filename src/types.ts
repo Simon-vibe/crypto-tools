@@ -54,6 +54,12 @@ export interface Order {
     owner: string;
 
     /**
+     * 订单过期时间戳 (毫秒)
+     * 如果为 undefined，表示订单永不过期
+     */
+    expireTimestamp?: number;
+
+    /**
      * 实际存储押金 (MIST)
      * 如果从链上获取到了实际值，使用实际值；否则为 undefined
      */
@@ -192,3 +198,98 @@ export interface CleanupTransactionOptions {
      */
     gasBudget?: bigint;
 }
+
+/**
+ * 池子扫描选项
+ */
+export interface PoolScanOptions {
+    /**
+     * 是否只扫描过期订单
+     * 
+     * 默认: true
+     */
+    onlyExpired?: boolean;
+
+    /**
+     * 当前时间戳（毫秒）
+     * 用于判断订单是否过期
+     * 
+     * 默认: Date.now()
+     */
+    currentTimestamp?: number;
+
+    /**
+     * 最大扫描订单数
+     * 
+     * 默认: 1000
+     */
+    limit?: number;
+
+    /**
+     * 是否获取实际的存储押金
+     * 
+     * 默认: false
+     */
+    fetchActualRebate?: boolean;
+}
+
+/**
+ * Tick 信息（价格层级）
+ */
+export interface TickInfo {
+    /**
+     * Tick 对象 ID
+     */
+    objectId: string;
+
+    /**
+     * 价格
+     */
+    price: bigint;
+
+    /**
+     * 该价格层级的订单数量
+     */
+    orderCount: number;
+}
+
+/**
+ * 池子扫描结果
+ */
+export interface PoolScanResult {
+    /**
+     * 池子 ID
+     */
+    poolId: string;
+
+    /**
+     * 扫描到的订单总数
+     */
+    totalOrders: number;
+
+    /**
+     * 过期订单数
+     */
+    expiredOrders: number;
+
+    /**
+     * 订单列表
+     */
+    orders: Order[];
+
+    /**
+     * 预计可获得的总返还（MIST）
+     */
+    estimatedRebateMist: bigint;
+
+    /**
+     * 预计可获得的总返还（SUI）
+     */
+    estimatedRebateSui: string;
+
+    /**
+     * 扫描的 Tick 数量
+     */
+    ticksScanned: number;
+}
+

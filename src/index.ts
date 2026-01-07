@@ -14,6 +14,9 @@ export {
     DynamicFieldInfo,
     FetchOrdersOptions,
     CleanupTransactionOptions,
+    PoolScanOptions,
+    TickInfo,
+    PoolScanResult,
 } from './types';
 
 export {

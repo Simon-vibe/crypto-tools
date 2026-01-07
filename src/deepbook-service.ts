@@ -443,6 +443,332 @@ export class DeepBookService {
         return sui.toFixed(9);
     }
 
+    // ============================================
+    // 公共清洁工功能 (Public Janitor)
+    // ============================================
+
+    /**
+     * 扫描池子中的所有订单（包括其他用户的订单）
+     * 
+     * 注意：这是公共清洁工功能，可以扫描任何用户的订单
+     * 
+     * @param poolId - 池子 ID
+     * @param options - 扫描选项
+     * @returns 池子扫描结果
+     * 
+     * @example
+     * ```typescript
+     * const result = await service.scanPoolForExpiredOrders(poolId, {
+     *   onlyExpired: true,
+     *   limit: 100,
+     * });
+     * console.log(`找到 ${result.expiredOrders} 个过期订单`);
+     * ```
+     */
+    async scanPoolForExpiredOrders(
+        poolId: string,
+        options: import('./types').PoolScanOptions = {}
+    ): Promise<import('./types').PoolScanResult> {
+        const {
+            onlyExpired = true,
+            currentTimestamp = Date.now(),
+            limit = 1000,
+            fetchActualRebate = false,
+        } = options;
+
+        try {
+            console.log(`开始扫描池子 ${poolId}...`);
+
+            // 1. 获取 Pool 的动态字段（ticks）
+            const ticks = await this.getPoolTicks(poolId);
+            console.log(`找到 ${ticks.length} 个价格层级 (ticks)`);
+
+            // 2. 遍历 ticks 获取订单
+            const allOrders: Order[] = [];
+            let ticksScanned = 0;
+
+            for (const tick of ticks) {
+                try {
+                    const orders = await this.getTickOrders(tick.objectId, poolId);
+                    allOrders.push(...orders);
+                    ticksScanned++;
+
+                    console.log(`  扫描 tick ${ticksScanned}/${ticks.length}: 找到 ${orders.length} 个订单`);
+
+                    if (allOrders.length >= limit) {
+                        console.log(`已达到限制 ${limit}，停止扫描`);
+                        break;
+                    }
+                } catch (error) {
+                    console.warn(`扫描 tick ${tick.objectId} 失败:`, error);
+                    // 继续扫描其他 ticks
+                }
+            }
+
+            console.log(`总共扫描到 ${allOrders.length} 个订单`);
+
+            // 3. 过滤过期订单
+            const filteredOrders = onlyExpired
+                ? allOrders.filter(order => this.isOrderExpired(order, currentTimestamp))
+                : allOrders;
+
+            console.log(`过期订单: ${filteredOrders.length}`);
+
+            // 4. 如果需要，获取实际存储押金
+            if (fetchActualRebate && filteredOrders.length > 0) {
+                await this.enrichOrdersWithActualRebate(filteredOrders);
+            }
+
+            // 5. 计算预计返还
+            const rebate = this.calculateRebate(filteredOrders);
+
+            return {
+                poolId,
+                totalOrders: allOrders.length,
+                expiredOrders: filteredOrders.length,
+                orders: filteredOrders,
+                estimatedRebateMist: rebate.totalRebateMist,
+                estimatedRebateSui: rebate.totalRebateSui,
+                ticksScanned,
+            };
+        } catch (error) {
+            console.error('扫描池子失败:', error);
+            throw new Error(`无法扫描池子: ${error instanceof Error ? error.message : String(error)}`);
+        }
+    }
+
+    /**
+     * 判断订单是否过期
+     * 
+     * @param order - 订单对象
+     * @param currentTimestamp - 当前时间戳（毫秒），默认为 Date.now()
+     * @returns 是否过期
+     */
+    isOrderExpired(order: Order, currentTimestamp: number = Date.now()): boolean {
+        // 如果订单没有设置过期时间，则永不过期
+        if (!order.expireTimestamp) {
+            return false;
+        }
+
+        // 检查是否已过期
+        return currentTimestamp > order.expireTimestamp;
+    }
+
+    /**
+     * 构建公共清理交易（清理任何用户的过期订单）
+     * 
+     * 注意：
+     * - 这是公共清洁工功能，可以清理任何用户的过期订单
+     * - 需要 DeepBook V3 合约支持公共清理函数
+     * - 返回的交易需要用户签名后才能执行
+     * 
+     * @param orders - 要清理的订单列表
+     * @param options - 交易构建选项
+     * @returns 可编程交易块数组
+     * 
+     * @example
+     * ```typescript
+     * const transactions = service.buildPublicCleanupTransaction(expiredOrders);
+     * 
+     * for (const tx of transactions) {
+     *   const result = await wallet.signAndExecuteTransaction({ transaction: tx });
+     *   console.log(`清理成功: ${result.digest}`);
+     * }
+     * ```
+     */
+    buildPublicCleanupTransaction(
+        orders: Order[],
+        options: import('./types').CleanupTransactionOptions = {}
+    ): Transaction[] {
+        const {
+            maxOrdersPerTransaction = 100,
+            gasBudget = 100_000_000n,
+        } = options;
+
+        if (orders.length === 0) {
+            return [];
+        }
+
+        // 确保不超过 PTB 的命令限制
+        const safeMaxOrders = Math.min(maxOrdersPerTransaction, MAX_COMMANDS_PER_PTB);
+
+        // 将订单分组，每组创建一个交易
+        const transactions: Transaction[] = [];
+
+        for (let i = 0; i < orders.length; i += safeMaxOrders) {
+            const batchOrders = orders.slice(i, i + safeMaxOrders);
+            const tx = this.buildSinglePublicCleanupTransaction(batchOrders, gasBudget);
+            transactions.push(tx);
+        }
+
+        return transactions;
+    }
+
+    /**
+     * 构建单个公共清理交易
+     * @private
+     */
+    private buildSinglePublicCleanupTransaction(orders: Order[], gasBudget: bigint): Transaction {
+        const tx = new Transaction();
+
+        // 设置 Gas 预算
+        tx.setGasBudget(Number(gasBudget));
+
+        // 为每个订单添加 clean_up_expired_order 调用
+        // 注意：这是假设的函数名，实际需要根据 DeepBook V3 合约确定
+        for (const order of orders) {
+            // DeepBook V3 的 clean_up_expired_order 函数签名 (假设):
+            // public entry fun clean_up_expired_order<BaseAsset, QuoteAsset>(
+            //     pool: &mut Pool<BaseAsset, QuoteAsset>,
+            //     order_id: u128,
+            //     ctx: &mut TxContext
+            // )
+
+            // 注意：实际的函数名和参数需要根据合约确定
+            // 这里使用占位符
+            tx.moveCall({
+                target: `${DEEPBOOK_PACKAGE_ID}::${DEEPBOOK_MODULES.POOL}::clean_up_expired_order`,
+                // typeArguments: [baseAssetType, quoteAssetType], // 需要从池子获取
+                arguments: [
+                    tx.object(order.poolId),       // pool 对象
+                    tx.pure.u128(order.orderId),   // order_id
+                ],
+            });
+        }
+
+        return tx;
+    }
+
+    /**
+     * 获取 Pool 的所有 ticks（价格层级）
+     * @private
+     */
+    private async getPoolTicks(poolId: string): Promise<import('./types').DynamicFieldInfo[]> {
+        const ticks: import('./types').DynamicFieldInfo[] = [];
+        let hasNextPage = true;
+        let cursor: string | null | undefined = null;
+
+        try {
+            while (hasNextPage) {
+                const result = await this.client.getDynamicFields({
+                    parentId: poolId,
+                    cursor,
+                    limit: 50,
+                });
+
+                ticks.push(...result.data);
+                hasNextPage = result.hasNextPage;
+                cursor = result.nextCursor;
+            }
+
+            return ticks;
+        } catch (error) {
+            console.error('获取 Pool ticks 失败:', error);
+            return ticks;
+        }
+    }
+
+    /**
+     * 获取指定 tick 的所有订单
+     * @private
+     */
+    private async getTickOrders(tickObjectId: string, poolId: string): Promise<Order[]> {
+        try {
+            // 获取 tick 对象
+            const tickObj = await this.client.getObject({
+                id: tickObjectId,
+                options: {
+                    showContent: true,
+                    showOwner: true,
+                    showStorageRebate: true,
+                },
+            });
+
+            if (!tickObj.data?.content || !('fields' in tickObj.data.content)) {
+                return [];
+            }
+
+            const fields = tickObj.data.content.fields as any;
+
+            // 解析 tick 中的订单列表
+            // 注意：实际结构需要根据 DeepBook V3 合约确定
+            // 这里假设 tick 对象有一个 orders 字段，包含订单列表
+
+            const orders: Order[] = [];
+
+            // 如果 tick 有订单列表字段
+            if (fields.orders && Array.isArray(fields.orders)) {
+                for (const orderData of fields.orders) {
+                    try {
+                        const order = this.parseOrderData(orderData, poolId, tickObj.data.storageRebate);
+                        if (order) {
+                            orders.push(order);
+                        }
+                    } catch (error) {
+                        console.warn(`解析订单失败:`, error);
+                    }
+                }
+            }
+
+            // 或者，如果订单存储在动态字段中
+            // 需要进一步查询动态字段
+            const orderFields = await this.client.getDynamicFields({
+                parentId: tickObjectId,
+                limit: 50,
+            });
+
+            for (const field of orderFields.data) {
+                try {
+                    const order = await this.parseDynamicFieldToOrder(
+                        field.objectId,
+                        'unknown', // 所有者地址未知（公共扫描）
+                        poolId
+                    );
+
+                    if (order) {
+                        orders.push(order);
+                    }
+                } catch (error) {
+                    console.warn(`解析订单 ${field.objectId} 失败:`, error);
+                }
+            }
+
+            return orders;
+        } catch (error) {
+            console.error(`获取 tick ${tickObjectId} 的订单失败:`, error);
+            return [];
+        }
+    }
+
+    /**
+     * 解析订单数据
+     * @private
+     */
+    private parseOrderData(orderData: any, poolId: string, storageRebate?: string | null): Order | null {
+        try {
+            const order: Order = {
+                orderId: orderData.order_id || orderData.orderId || orderData.id,
+                side: this.parseOrderSide(orderData.is_bid ?? orderData.isBid),
+                price: BigInt(orderData.price || 0),
+                quantity: BigInt(orderData.quantity || 0),
+                filledQuantity: BigInt(orderData.filled_quantity || orderData.filledQuantity || 0),
+                status: this.parseOrderStatus(orderData),
+                timestamp: Number(orderData.timestamp || orderData.created_at || Date.now()),
+                poolId,
+                owner: orderData.owner || orderData.user || 'unknown',
+                expireTimestamp: orderData.expire_timestamp || orderData.expireTimestamp
+                    ? Number(orderData.expire_timestamp || orderData.expireTimestamp)
+                    : undefined,
+                storageRebate: storageRebate ? BigInt(storageRebate) : undefined,
+            };
+
+            return order;
+        } catch (error) {
+            console.error('解析订单数据失败:', error);
+            return null;
+        }
+    }
+
     /**
      * 获取 SuiClient 实例
      * 用于高级用户直接访问底层 API

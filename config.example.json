@@ -3,5 +3,5 @@
     "rpcUrl": "https://fullnode.mainnet.sui.io:443",
     "privateKey": "your_base64_private_key_here",
     "userAddress": "0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef",
-    "poolId": "0xabcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890"
+    "poolId": "0xe05dafb5133bcffb8d59f4e12465dc0e9faeaa05e3e342a08fe135800e3e4407"
 }

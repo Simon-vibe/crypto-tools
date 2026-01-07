@@ -160,6 +160,49 @@ npx ts-node examples/usage.ts
 
 > **注意**: `config.json` 已添加到 `.gitignore`，不会被提交到 Git 仓库。
 
+### 公共清洁工模式（扫描池子中的过期订单）
+
+⚠️ **实验性功能**: 需要 DeepBook V3 合约支持公共清理函数。
+
+扫描池子中所有用户的过期订单并清理：
+
+```typescript
+import { DeepBookService } from './src/deepbook-service';
+
+const service = new DeepBookService('https://fullnode.mainnet.sui.io:443');
+
+// 1. 扫描池子中的过期订单
+const result = await service.scanPoolForExpiredOrders(poolId, {
+  onlyExpired: true,  // 只扫描过期订单
+  limit: 100,         // 最多扫描 100 个订单
+});
+
+console.log(`找到 ${result.expiredOrders} 个过期订单`);
+console.log(`预计可获得: ${result.estimatedRebateSui} SUI`);
+
+// 2. 构建并执行清理交易
+const transactions = service.buildPublicCleanupTransaction(result.orders);
+
+for (const tx of transactions) {
+  const txResult = await service.getClient().signAndExecuteTransaction({
+    signer: keypair,
+    transaction: tx,
+  });
+  console.log(`✅ 清理成功: ${txResult.digest}`);
+}
+```
+
+**运行公共清洁工示例:**
+
+```bash
+# 确保 config.json 中配置了 poolId
+npx ts-node examples/janitor.ts
+```
+
+> **注意**: 
+> - 此功能扫描池子中所有用户的订单，不仅限于自己的订单
+> - 需要 DeepBook V3 合约支持 `clean_up_expired_order` 公共函数
+> - 实际实现可能需要根据合约接口调整
 
 
 ## API 文档
