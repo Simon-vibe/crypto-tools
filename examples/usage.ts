@@ -11,6 +11,7 @@ import { DeepBookService } from '../src/deepbook-service';
 import { NETWORK_CONFIG } from '../src/constants';
 import { Ed25519Keypair } from '@mysten/sui/keypairs/ed25519';
 import { fromB64 } from '@mysten/sui/utils';
+import { loadConfig, configExists } from '../src/config-loader';
 
 /**
  * 主函数 - 完整的使用流程
@@ -128,15 +129,18 @@ async function main() {
         console.log('准备执行交易...');
         console.log('─'.repeat(80));
 
-        // 1. 从环境变量读取私钥（切勿硬编码！）
-        // 格式：base64 编码的私钥字符串
-        const privateKey = process.env.SUI_PRIVATE_KEY;
-
-        if (!privateKey) {
-            console.log('⚠️  未设置 SUI_PRIVATE_KEY 环境变量');
+        // 1. 从配置文件读取私钥
+        if (!configExists()) {
+            console.log('⚠️  未找到配置文件 config.json');
             console.log('');
-            console.log('如需执行交易，请设置环境变量：');
-            console.log('  export SUI_PRIVATE_KEY="your_base64_private_key"');
+            console.log('如需执行交易，请按以下步骤操作：');
+            console.log('1. 复制 config.example.json 为 config.json');
+            console.log('   cp config.example.json config.json');
+            console.log('');
+            console.log('2. 编辑 config.json，填入您的配置信息：');
+            console.log('   - privateKey: 您的 base64 编码私钥');
+            console.log('   - userAddress: 用户地址（可选）');
+            console.log('   - poolId: 池子 ID（可选）');
             console.log('');
             console.log('或使用钱包 SDK（推荐用于生产环境）：');
             console.log('```typescript');
@@ -150,12 +154,15 @@ async function main() {
             console.log('```');
             console.log('');
         } else {
-            // 2. 使用私钥创建 Keypair
+            // 2. 加载配置文件
             try {
-                const keypair = Ed25519Keypair.fromSecretKey(fromB64(privateKey));
+                const config = loadConfig();
+                const keypair = Ed25519Keypair.fromSecretKey(fromB64(config.privateKey));
                 const signerAddress = keypair.toSuiAddress();
 
+                console.log(`✓ 配置文件加载成功`);
                 console.log(`✓ 使用地址: ${signerAddress}`);
+                console.log(`✓ 网络: ${config.network}`);
                 console.log(`✓ 准备执行 ${transactions.length} 个交易\n`);
 
                 // 3. 逐个执行交易
@@ -216,7 +223,7 @@ async function main() {
                 console.log(`✓ 预计回扣: ${rebateCalc.totalRebateSui} SUI`);
                 console.log('');
             } catch (error) {
-                console.error('❌ 私钥解析失败:', error);
+                console.error('❌ 配置加载或执行失败:', error);
                 if (error instanceof Error) {
                     console.error('错误详情:', error.message);
                 }
@@ -319,12 +326,18 @@ async function batchExample() {
  * 生产环境请使用钱包 SDK
  */
 async function executeWithKeypair() {
-    const service = new DeepBookService(NETWORK_CONFIG.MAINNET.url);
+    // 1. 加载配置
+    const config = loadConfig();
+    const service = new DeepBookService(config.rpcUrl || NETWORK_CONFIG.MAINNET.url);
 
-    const userAddress = '0x...';
-    const poolId = '0x...';
+    const userAddress = config.userAddress || '0x...';
+    const poolId = config.poolId || '0x...';
 
-    // 1. 获取订单
+    console.log(`使用配置: ${config.network}`);
+    console.log(`用户地址: ${userAddress}`);
+    console.log(`池子 ID: ${poolId}\n`);
+
+    // 2. 获取订单
     const orders = await service.fetchUserOpenOrders(userAddress, poolId);
 
     if (orders.length === 0) {
@@ -332,22 +345,16 @@ async function executeWithKeypair() {
         return;
     }
 
-    // 2. 计算预期返还
+    // 3. 计算预期返还
     const rebate = service.calculateRebate(orders);
-    console.log(`预计可返还: ${rebate.totalRebateSui} SUI`);
+    console.log(`预计可返还: ${rebate.totalRebateSui} SUI\n`);
 
-    // 3. 构建交易
+    // 4. 构建交易
     const transactions = service.buildCleanUpTransaction(orders);
 
-    // 4. 从环境变量获取私钥
-    const privateKey = process.env.SUI_PRIVATE_KEY;
-    if (!privateKey) {
-        throw new Error('请设置 SUI_PRIVATE_KEY 环境变量');
-    }
-
-    // 5. 执行交易
-    const keypair = Ed25519Keypair.fromSecretKey(fromB64(privateKey));
-    console.log(`使用地址: ${keypair.toSuiAddress()}`);
+    // 5. 从配置文件获取私钥并执行交易
+    const keypair = Ed25519Keypair.fromSecretKey(fromB64(config.privateKey));
+    console.log(`使用地址: ${keypair.toSuiAddress()}\n`);
 
     for (const tx of transactions) {
         const result = await service.getClient().signAndExecuteTransaction({
@@ -368,6 +375,7 @@ async function executeWithKeypair() {
                 console.log(`  ${amount > 0 ? '💰' : '💸'} ${amount.toFixed(9)} SUI`);
             });
         }
+        console.log('');
     }
 }
 

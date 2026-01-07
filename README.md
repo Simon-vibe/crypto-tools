@@ -100,22 +100,20 @@ const totalSui = Number(totalRebateMist) / 1_000_000_000;
 console.log(`所有池子总计可返还: ${totalSui.toFixed(9)} SUI`);
 ```
 
-### 执行交易（使用私钥）
+### 执行交易（使用配置文件）
 
 ⚠️ **警告**: 仅用于开发和测试环境。生产环境请使用钱包 SDK。
 
 ```typescript
 import { Ed25519Keypair } from '@mysten/sui/keypairs/ed25519';
 import { fromB64 } from '@mysten/sui/utils';
+import { loadConfig } from './src/config-loader';
 
-// 1. 从环境变量获取私钥
-const privateKey = process.env.SUI_PRIVATE_KEY;
-if (!privateKey) {
-  throw new Error('请设置 SUI_PRIVATE_KEY 环境变量');
-}
+// 1. 加载配置文件
+const config = loadConfig(); // 默认读取 config.json
 
 // 2. 创建 Keypair
-const keypair = Ed25519Keypair.fromSecretKey(fromB64(privateKey));
+const keypair = Ed25519Keypair.fromSecretKey(fromB64(config.privateKey));
 
 // 3. 执行交易
 for (const tx of transactions) {
@@ -142,15 +140,26 @@ for (const tx of transactions) {
 }
 ```
 
-**设置私钥环境变量:**
+**设置配置文件:**
 
 ```bash
-# 导出私钥（base64 格式）
-export SUI_PRIVATE_KEY="your_base64_private_key_here"
+# 1. 复制示例配置文件
+cp config.example.json config.json
 
-# 运行示例
+# 2. 编辑 config.json，填入您的配置
+# {
+#   "network": "mainnet",
+#   "privateKey": "your_base64_private_key_here",
+#   "userAddress": "0x...",
+#   "poolId": "0x..."
+# }
+
+# 3. 运行示例
 npx ts-node examples/usage.ts
 ```
+
+> **注意**: `config.json` 已添加到 `.gitignore`，不会被提交到 Git 仓库。
+
 
 
 ## API 文档
