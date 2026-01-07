@@ -138,16 +138,90 @@ function updateProgress(percent, status) {
 }
 
 /**
+ * Bech32 解码函数
+ * 用于解码 suiprivkey1... 格式的私钥
+ */
+function decodeBech32(bechString) {
+    const CHARSET = 'qpzry9x8gf2tvdw0s3jn54khce6mua7l';
+    const GENERATOR = [0x3b6a57b2, 0x26508e6d, 0x1ea119fa, 0x3d4233dd, 0x2a1462b3];
+
+    // 分离前缀和数据
+    const pos = bechString.lastIndexOf('1');
+    if (pos < 1) {
+        throw new Error('无效的 Bech32 格式');
+    }
+
+    const prefix = bechString.substring(0, pos);
+    const data = bechString.substring(pos + 1);
+
+    // 解码数据部分
+    const decoded = [];
+    for (let i = 0; i < data.length; i++) {
+        const char = data[i];
+        const value = CHARSET.indexOf(char);
+        if (value === -1) {
+            throw new Error(`无效的 Bech32 字符: ${char}`);
+        }
+        decoded.push(value);
+    }
+
+    // 移除校验和（最后6个字符）
+    const payload = decoded.slice(0, -6);
+
+    // 从 5-bit 转换为 8-bit
+    const bytes = [];
+    let acc = 0;
+    let bits = 0;
+
+    for (const value of payload) {
+        acc = (acc << 5) | value;
+        bits += 5;
+
+        while (bits >= 8) {
+            bits -= 8;
+            bytes.push((acc >> bits) & 0xff);
+        }
+    }
+
+    return new Uint8Array(bytes);
+}
+
+/**
  * 转换私钥格式为 Base64
  * 支持多种输入格式：
  * - Base64 格式（直接返回）
  * - 十六进制格式（0x... 或纯 hex）
+ * - Bech32 格式（suiprivkey1...）
  * 
  * @param privateKeyInput - 用户输入的私钥
  * @returns Base64 格式的私钥
  */
 function convertPrivateKeyToBase64(privateKeyInput) {
     const input = privateKeyInput.trim();
+
+    // 检查是否是 Bech32 格式（suiprivkey1...）
+    if (input.startsWith('suiprivkey1')) {
+        try {
+            addLog('检测到 Bech32 格式私钥 (suiprivkey1...)', 'info');
+            const bytes = decodeBech32(input);
+
+            // 验证长度（应该是 33 字节：1字节标志 + 32字节私钥）
+            if (bytes.length !== 33) {
+                throw new Error(`Bech32 私钥长度无效。期望 33 字节，实际 ${bytes.length} 字节。`);
+            }
+
+            // 移除第一个字节（标志位），只保留 32 字节私钥
+            const privateKeyBytes = bytes.slice(1);
+
+            // 转换为 Base64
+            const base64 = btoa(String.fromCharCode.apply(null, Array.from(privateKeyBytes)));
+            addLog('已将 Bech32 私钥转换为 Base64 格式', 'success');
+
+            return base64;
+        } catch (e) {
+            throw new Error(`Bech32 解码失败: ${e.message}`);
+        }
+    }
 
     // 检查是否已经是 Base64 格式
     // Base64 通常包含 +, /, = 字符，且不包含 0x 前缀
@@ -174,7 +248,7 @@ function convertPrivateKeyToBase64(privateKeyInput) {
 
     // 验证是否是有效的十六进制
     if (!/^[0-9a-fA-F]+$/.test(hexString)) {
-        throw new Error('私钥格式无效。请输入 Base64 或十六进制格式的私钥。');
+        throw new Error('私钥格式无效。请输入 Base64、十六进制或 Bech32 (suiprivkey1...) 格式的私钥。');
     }
 
     // 检查长度（32 字节 = 64 个十六进制字符，64 字节 = 128 个十六进制字符）
@@ -189,7 +263,7 @@ function convertPrivateKeyToBase64(privateKeyInput) {
     }
 
     // 转换为 Base64
-    const base64 = btoa(String.fromCharCode.apply(null, bytes));
+    const base64 = btoa(String.fromCharCode.apply(null, Array.from(bytes)));
     addLog('已将十六进制私钥转换为 Base64 格式', 'info');
 
     return base64;
