@@ -9,6 +9,8 @@
 
 import { DeepBookService } from '../src/deepbook-service';
 import { NETWORK_CONFIG } from '../src/constants';
+import { Ed25519Keypair } from '@mysten/sui/keypairs/ed25519';
+import { fromB64 } from '@mysten/sui/utils';
 
 /**
  * 主函数 - 完整的使用流程
@@ -120,28 +122,107 @@ async function main() {
         });
 
         // ============================================
-        // 步骤 6: 执行交易（需要钱包签名）
+        // 步骤 6: 执行交易（真实环境）
         // ============================================
 
-        console.log('注意事项:');
+        console.log('准备执行交易...');
         console.log('─'.repeat(80));
-        console.log('1. 上述交易需要用户使用钱包签名后才能执行');
-        console.log('2. 每个交易都需要单独签名和执行');
-        console.log('3. 执行交易需要支付 Gas 费用');
-        console.log('4. 成功取消订单后，存储费将自动返还到用户账户');
-        console.log('');
 
-        console.log('示例代码（需要集成钱包）:');
-        console.log('```typescript');
-        console.log('// 使用 Sui Wallet Adapter 或其他钱包 SDK');
-        console.log('for (const tx of transactions) {');
-        console.log('  const result = await wallet.signAndExecuteTransaction({');
-        console.log('    transaction: tx,');
-        console.log('  });');
-        console.log('  console.log(`交易已执行: ${result.digest}`);');
-        console.log('}');
-        console.log('```');
-        console.log('');
+        // 1. 从环境变量读取私钥（切勿硬编码！）
+        // 格式：base64 编码的私钥字符串
+        const privateKey = process.env.SUI_PRIVATE_KEY;
+
+        if (!privateKey) {
+            console.log('⚠️  未设置 SUI_PRIVATE_KEY 环境变量');
+            console.log('');
+            console.log('如需执行交易，请设置环境变量：');
+            console.log('  export SUI_PRIVATE_KEY="your_base64_private_key"');
+            console.log('');
+            console.log('或使用钱包 SDK（推荐用于生产环境）：');
+            console.log('```typescript');
+            console.log('// 使用 Sui Wallet Adapter 或其他钱包 SDK');
+            console.log('for (const tx of transactions) {');
+            console.log('  const result = await wallet.signAndExecuteTransaction({');
+            console.log('    transaction: tx,');
+            console.log('  });');
+            console.log('  console.log(`交易已执行: ${result.digest}`);');
+            console.log('}');
+            console.log('```');
+            console.log('');
+        } else {
+            // 2. 使用私钥创建 Keypair
+            try {
+                const keypair = Ed25519Keypair.fromSecretKey(fromB64(privateKey));
+                const signerAddress = keypair.toSuiAddress();
+
+                console.log(`✓ 使用地址: ${signerAddress}`);
+                console.log(`✓ 准备执行 ${transactions.length} 个交易\n`);
+
+                // 3. 逐个执行交易
+                let totalActualRebate = 0;
+                let successCount = 0;
+
+                for (let i = 0; i < transactions.length; i++) {
+                    const tx = transactions[i];
+                    console.log(`执行交易 ${i + 1}/${transactions.length}...`);
+
+                    try {
+                        const result = await service.getClient().signAndExecuteTransaction({
+                            signer: keypair,
+                            transaction: tx,
+                            options: {
+                                showEffects: true,
+                                showBalanceChanges: true,
+                            },
+                        });
+
+                        console.log(`  ✅ 交易成功! Digest: ${result.digest}`);
+
+                        // 4. 打印实际回扣金额
+                        if (result.balanceChanges) {
+                            const rebateChange = result.balanceChanges.find(
+                                (bc) =>
+                                    'owner' in bc &&
+                                    typeof bc.owner === 'object' &&
+                                    bc.owner !== null &&
+                                    'AddressOwner' in bc.owner &&
+                                    bc.owner.AddressOwner === signerAddress &&
+                                    Number(bc.amount) > 0
+                            );
+
+                            if (rebateChange) {
+                                const rebateAmount = Number(rebateChange.amount) / 1e9;
+                                totalActualRebate += rebateAmount;
+                                console.log(`  💰 实际收到回扣: ${rebateAmount.toFixed(9)} SUI`);
+                            }
+                        }
+
+                        successCount++;
+                        console.log('');
+                    } catch (error) {
+                        console.error(`  ❌ 交易失败:`, error);
+                        if (error instanceof Error) {
+                            console.error(`  错误信息: ${error.message}`);
+                        }
+                        console.log('');
+                    }
+                }
+
+                // 5. 执行总结
+                console.log('执行总结:');
+                console.log('─'.repeat(80));
+                console.log(`✓ 成功执行: ${successCount}/${transactions.length} 个交易`);
+                console.log(`✓ 实际收到回扣: ${totalActualRebate.toFixed(9)} SUI`);
+                console.log(`✓ 预计回扣: ${rebateCalc.totalRebateSui} SUI`);
+                console.log('');
+            } catch (error) {
+                console.error('❌ 私钥解析失败:', error);
+                if (error instanceof Error) {
+                    console.error('错误详情:', error.message);
+                }
+                console.log('');
+            }
+        }
 
         // ============================================
         // 总结
@@ -231,6 +312,65 @@ async function batchExample() {
     console.log(`\n所有池子总计: ${totalSui.toFixed(9)} SUI`);
 }
 
+/**
+ * 执行交易示例 - 使用私钥真实执行
+ * 
+ * ⚠️ 警告：仅用于开发和测试环境
+ * 生产环境请使用钱包 SDK
+ */
+async function executeWithKeypair() {
+    const service = new DeepBookService(NETWORK_CONFIG.MAINNET.url);
+
+    const userAddress = '0x...';
+    const poolId = '0x...';
+
+    // 1. 获取订单
+    const orders = await service.fetchUserOpenOrders(userAddress, poolId);
+
+    if (orders.length === 0) {
+        console.log('没有未完成的订单');
+        return;
+    }
+
+    // 2. 计算预期返还
+    const rebate = service.calculateRebate(orders);
+    console.log(`预计可返还: ${rebate.totalRebateSui} SUI`);
+
+    // 3. 构建交易
+    const transactions = service.buildCleanUpTransaction(orders);
+
+    // 4. 从环境变量获取私钥
+    const privateKey = process.env.SUI_PRIVATE_KEY;
+    if (!privateKey) {
+        throw new Error('请设置 SUI_PRIVATE_KEY 环境变量');
+    }
+
+    // 5. 执行交易
+    const keypair = Ed25519Keypair.fromSecretKey(fromB64(privateKey));
+    console.log(`使用地址: ${keypair.toSuiAddress()}`);
+
+    for (const tx of transactions) {
+        const result = await service.getClient().signAndExecuteTransaction({
+            signer: keypair,
+            transaction: tx,
+            options: {
+                showEffects: true,
+                showBalanceChanges: true,
+            },
+        });
+
+        console.log(`✅ 交易成功: ${result.digest}`);
+
+        // 显示余额变化
+        if (result.balanceChanges) {
+            result.balanceChanges.forEach((bc) => {
+                const amount = Number(bc.amount) / 1e9;
+                console.log(`  ${amount > 0 ? '💰' : '💸'} ${amount.toFixed(9)} SUI`);
+            });
+        }
+    }
+}
+
 // 运行主函数
 if (require.main === module) {
     main().catch(console.error);
@@ -242,4 +382,5 @@ export {
     simpleExample,
     advancedExample,
     batchExample,
+    executeWithKeypair,
 };

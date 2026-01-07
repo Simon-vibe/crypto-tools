@@ -100,6 +100,59 @@ const totalSui = Number(totalRebateMist) / 1_000_000_000;
 console.log(`所有池子总计可返还: ${totalSui.toFixed(9)} SUI`);
 ```
 
+### 执行交易（使用私钥）
+
+⚠️ **警告**: 仅用于开发和测试环境。生产环境请使用钱包 SDK。
+
+```typescript
+import { Ed25519Keypair } from '@mysten/sui/keypairs/ed25519';
+import { fromB64 } from '@mysten/sui/utils';
+
+// 1. 从环境变量获取私钥
+const privateKey = process.env.SUI_PRIVATE_KEY;
+if (!privateKey) {
+  throw new Error('请设置 SUI_PRIVATE_KEY 环境变量');
+}
+
+// 2. 创建 Keypair
+const keypair = Ed25519Keypair.fromSecretKey(fromB64(privateKey));
+
+// 3. 执行交易
+for (const tx of transactions) {
+  const result = await service.getClient().signAndExecuteTransaction({
+    signer: keypair,
+    transaction: tx,
+    options: {
+      showEffects: true,
+      showBalanceChanges: true,
+    },
+  });
+
+  console.log(`✅ 交易成功: ${result.digest}`);
+
+  // 4. 查看实际返还金额
+  if (result.balanceChanges) {
+    const rebate = result.balanceChanges.find(
+      bc => bc.owner.AddressOwner === keypair.toSuiAddress() && Number(bc.amount) > 0
+    );
+    if (rebate) {
+      console.log(`💰 实际收到: ${Number(rebate.amount) / 1e9} SUI`);
+    }
+  }
+}
+```
+
+**设置私钥环境变量:**
+
+```bash
+# 导出私钥（base64 格式）
+export SUI_PRIVATE_KEY="your_base64_private_key_here"
+
+# 运行示例
+npx ts-node examples/usage.ts
+```
+
+
 ## API 文档
 
 ### DeepBookService

@@ -7,7 +7,7 @@
  * DeepBook V3 Package ID (Mainnet)
  * 注意：这是一个示例 ID，请根据实际部署的 DeepBook V3 合约地址更新
  */
-export const DEEPBOOK_PACKAGE_ID = '0x000000000000000000000000000000000000000000000000000000000000dee9';
+export const DEEPBOOK_PACKAGE_ID = '0x00c1a56ec8c4c623a848b2ed2f03d23a25d17570b670c22106f336eb933785cc';
 
 /**
  * DeepBook V3 模块和函数名称
