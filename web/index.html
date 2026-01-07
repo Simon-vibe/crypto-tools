@@ -1,0 +1,191 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>DeepBook V3 订单清理工具</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <div class="container">
+        <!-- 头部 -->
+        <header class="header">
+            <div class="header-content">
+                <h1>🧹 DeepBook V3 订单清理工具</h1>
+                <p class="subtitle">自动扫描并清理过期订单，回收存储费</p>
+            </div>
+        </header>
+
+        <!-- 主内容区 -->
+        <main class="main-content">
+            <!-- 配置面板 -->
+            <section class="card config-panel" id="configPanel">
+                <h2>⚙️ 配置参数</h2>
+                
+                <div class="form-group">
+                    <label for="network">网络</label>
+                    <select id="network" class="input">
+                        <option value="mainnet">Mainnet</option>
+                        <option value="testnet">Testnet</option>
+                        <option value="devnet">Devnet</option>
+                    </select>
+                </div>
+
+                <div class="form-group">
+                    <label for="poolId">池子 ID</label>
+                    <input type="text" id="poolId" class="input" placeholder="0x..." />
+                    <small>DeepBook V3 Pool 对象 ID</small>
+                </div>
+
+                <div class="form-group">
+                    <label for="privateKey">私钥 (Base64)</label>
+                    <input type="password" id="privateKey" class="input" placeholder="输入您的 Base64 私钥" />
+                    <small>⚠️ 私钥仅在浏览器本地使用，不会上传到服务器</small>
+                </div>
+
+                <div class="form-group">
+                    <label for="scanLimit">扫描限制</label>
+                    <input type="number" id="scanLimit" class="input" value="100" min="1" max="1000" />
+                    <small>最多扫描的订单数量</small>
+                </div>
+
+                <div class="form-group checkbox-group">
+                    <label>
+                        <input type="checkbox" id="onlyExpired" checked />
+                        <span>仅扫描过期订单</span>
+                    </label>
+                </div>
+
+                <div class="form-group checkbox-group">
+                    <label>
+                        <input type="checkbox" id="fetchActualRebate" />
+                        <span>获取实际存储押金（更慢但更准确）</span>
+                    </label>
+                </div>
+
+                <div class="button-group">
+                    <button id="scanBtn" class="btn btn-primary">
+                        <span class="btn-icon">🔍</span>
+                        开始扫描
+                    </button>
+                    <button id="clearBtn" class="btn btn-secondary">
+                        <span class="btn-icon">🗑️</span>
+                        清空配置
+                    </button>
+                </div>
+            </section>
+
+            <!-- 进度显示 -->
+            <section class="card progress-panel" id="progressPanel" style="display: none;">
+                <h2>📊 扫描进度</h2>
+                
+                <div class="progress-bar-container">
+                    <div class="progress-bar" id="progressBar">
+                        <div class="progress-fill" id="progressFill"></div>
+                    </div>
+                    <div class="progress-text" id="progressText">0%</div>
+                </div>
+
+                <div class="status-grid">
+                    <div class="status-item">
+                        <div class="status-label">当前状态</div>
+                        <div class="status-value" id="currentStatus">等待中...</div>
+                    </div>
+                    <div class="status-item">
+                        <div class="status-label">已扫描 Ticks</div>
+                        <div class="status-value" id="ticksScanned">0</div>
+                    </div>
+                    <div class="status-item">
+                        <div class="status-label">找到订单</div>
+                        <div class="status-value" id="ordersFound">0</div>
+                    </div>
+                    <div class="status-item">
+                        <div class="status-label">过期订单</div>
+                        <div class="status-value highlight" id="expiredOrders">0</div>
+                    </div>
+                </div>
+
+                <div class="log-container" id="logContainer">
+                    <div class="log-header">日志输出</div>
+                    <div class="log-content" id="logContent"></div>
+                </div>
+            </section>
+
+            <!-- 结果显示 -->
+            <section class="card result-panel" id="resultPanel" style="display: none;">
+                <h2>✨ 扫描结果</h2>
+                
+                <div class="result-summary">
+                    <div class="summary-card">
+                        <div class="summary-icon">📦</div>
+                        <div class="summary-content">
+                            <div class="summary-label">总订单数</div>
+                            <div class="summary-value" id="totalOrders">0</div>
+                        </div>
+                    </div>
+                    <div class="summary-card">
+                        <div class="summary-icon">⏰</div>
+                        <div class="summary-content">
+                            <div class="summary-label">过期订单</div>
+                            <div class="summary-value" id="expiredOrdersResult">0</div>
+                        </div>
+                    </div>
+                    <div class="summary-card highlight-card">
+                        <div class="summary-icon">💰</div>
+                        <div class="summary-content">
+                            <div class="summary-label">预计返还</div>
+                            <div class="summary-value" id="estimatedRebate">0 SUI</div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="orders-list" id="ordersList"></div>
+
+                <div class="button-group">
+                    <button id="executeBtn" class="btn btn-success" style="display: none;">
+                        <span class="btn-icon">🚀</span>
+                        执行清理交易
+                    </button>
+                    <button id="newScanBtn" class="btn btn-secondary">
+                        <span class="btn-icon">🔄</span>
+                        新的扫描
+                    </button>
+                </div>
+            </section>
+
+            <!-- 交易执行面板 -->
+            <section class="card execution-panel" id="executionPanel" style="display: none;">
+                <h2>🚀 交易执行</h2>
+                
+                <div class="execution-progress">
+                    <div class="execution-status" id="executionStatus">准备执行...</div>
+                    <div class="execution-stats">
+                        <span>成功: <strong id="successCount">0</strong></span>
+                        <span>失败: <strong id="failCount">0</strong></span>
+                        <span>总计: <strong id="totalTxCount">0</strong></span>
+                    </div>
+                </div>
+
+                <div class="transaction-list" id="transactionList"></div>
+
+                <div class="execution-summary" id="executionSummary" style="display: none;">
+                    <h3>执行总结</h3>
+                    <div class="summary-stats">
+                        <p>✅ 成功执行: <strong id="finalSuccessCount">0</strong> 个交易</p>
+                        <p>💰 实际收到: <strong id="actualRebate">0</strong> SUI</p>
+                    </div>
+                </div>
+            </section>
+        </main>
+
+        <!-- 页脚 -->
+        <footer class="footer">
+            <p>DeepBook V3 订单清理工具 | 基于 <a href="https://github.com/Simon-vibe/crypto-tools" target="_blank">crypto-tools</a></p>
+            <p><small>⚠️ 请确保在安全的环境中使用，私钥仅在本地浏览器中处理</small></p>
+        </footer>
+    </div>
+
+    <!-- 引入 Sui SDK -->
+    <script type="module" src="app.js"></script>
+</body>
+</html>
