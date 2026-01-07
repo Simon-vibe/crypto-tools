@@ -137,6 +137,65 @@ function updateProgress(percent, status) {
     elements.currentStatus.textContent = status;
 }
 
+/**
+ * 转换私钥格式为 Base64
+ * 支持多种输入格式：
+ * - Base64 格式（直接返回）
+ * - 十六进制格式（0x... 或纯 hex）
+ * 
+ * @param privateKeyInput - 用户输入的私钥
+ * @returns Base64 格式的私钥
+ */
+function convertPrivateKeyToBase64(privateKeyInput) {
+    const input = privateKeyInput.trim();
+
+    // 检查是否已经是 Base64 格式
+    // Base64 通常包含 +, /, = 字符，且不包含 0x 前缀
+    if (!input.startsWith('0x') && /^[A-Za-z0-9+/]+=*$/.test(input)) {
+        // 验证是否是有效的 Base64
+        try {
+            const decoded = atob(input);
+            if (decoded.length === 32 || decoded.length === 64) {
+                addLog('检测到 Base64 格式私钥', 'info');
+                return input;
+            }
+        } catch (e) {
+            // 不是有效的 Base64，继续尝试其他格式
+        }
+    }
+
+    // 处理十六进制格式
+    let hexString = input;
+
+    // 移除 0x 前缀
+    if (hexString.startsWith('0x') || hexString.startsWith('0X')) {
+        hexString = hexString.slice(2);
+    }
+
+    // 验证是否是有效的十六进制
+    if (!/^[0-9a-fA-F]+$/.test(hexString)) {
+        throw new Error('私钥格式无效。请输入 Base64 或十六进制格式的私钥。');
+    }
+
+    // 检查长度（32 字节 = 64 个十六进制字符，64 字节 = 128 个十六进制字符）
+    if (hexString.length !== 64 && hexString.length !== 128) {
+        throw new Error(`私钥长度无效。期望 64 或 128 个十六进制字符，实际 ${hexString.length} 个。`);
+    }
+
+    // 将十六进制转换为字节数组
+    const bytes = new Uint8Array(hexString.length / 2);
+    for (let i = 0; i < hexString.length; i += 2) {
+        bytes[i / 2] = parseInt(hexString.substr(i, 2), 16);
+    }
+
+    // 转换为 Base64
+    const base64 = btoa(String.fromCharCode.apply(null, bytes));
+    addLog('已将十六进制私钥转换为 Base64 格式', 'info');
+
+    return base64;
+}
+
+
 // 处理扫描
 async function handleScan() {
     // 验证输入
@@ -343,8 +402,11 @@ async function handleExecute() {
     elements.executeBtn.disabled = true;
 
     try {
+        // 转换私钥格式
+        const base64PrivateKey = convertPrivateKeyToBase64(elements.privateKey.value.trim());
+
         // 创建 keypair
-        const keypair = Ed25519Keypair.fromSecretKey(fromB64(elements.privateKey.value.trim()));
+        const keypair = Ed25519Keypair.fromSecretKey(fromB64(base64PrivateKey));
         const signerAddress = keypair.toSuiAddress();
 
         addLog(`使用地址: ${signerAddress}`, 'info');
